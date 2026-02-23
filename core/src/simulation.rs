@@ -1,24 +1,23 @@
 use crate::parser::ArgParser;
 use crate::rpc_provider::ProviderRegistry;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use moka::future::Cache;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use soroban_sdk::xdr::{
     Hash, HostFunction, InvokeContractArgs, InvokeHostFunctionOp, LedgerEntry, LedgerKey, Limits,
     Memo, MuxedAccount, Operation, OperationBody, Preconditions, ReadXdr, ScAddress, ScSymbol,
     ScVal, SequenceNumber, SorobanAuthorizationEntry, SorobanTransactionData, Transaction,
     TransactionExt, TransactionV1Envelope, Uint256, VecM, WriteXdr,
 };
-use stellar_strkey::Strkey;
-use thiserror::Error;
-use crate::parser::ArgParser;
-use moka::future::Cache;
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use stellar_strkey::Strkey;
+use thiserror::Error;
 use tokio::fs;
 use utoipa::ToSchema;
 
@@ -237,6 +236,7 @@ impl SimulationEngine {
     }
 
     /// Optimized limit discovery via binary search
+    #[allow(clippy::too_many_arguments)]
     pub async fn optimize_limits(
         &self,
         contract_id: &str,
@@ -311,6 +311,7 @@ impl SimulationEngine {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn binary_search_resource(
         &self,
         contract_id: &str,
@@ -383,9 +384,9 @@ impl SimulationEngine {
         // 3. Create the basic host function
         let contract_hash = self.parse_contract_id(contract_id)?;
         let contract_address = ScAddress::Contract(Hash(contract_hash));
-        let func_symbol: ScSymbol = function_name.try_into().map_err(|_| {
-            SimulationError::InvalidContract("Invalid function name".to_string())
-        })?;
+        let func_symbol: ScSymbol = function_name
+            .try_into()
+            .map_err(|_| SimulationError::InvalidContract("Invalid function name".to_string()))?;
         let sc_args: VecM<ScVal> = args
             .iter()
             .map(|arg| self.parse_sc_val_arg(arg))
@@ -427,9 +428,9 @@ impl SimulationEngine {
             signatures: VecM::default(),
         };
 
-        let xdr_bytes = envelope.to_xdr(Limits::none()).map_err(|e| {
-            SimulationError::XdrError(format!("Failed to encode XDR: {}", e))
-        })?;
+        let xdr_bytes = envelope
+            .to_xdr(Limits::none())
+            .map_err(|e| SimulationError::XdrError(format!("Failed to encode XDR: {}", e)))?;
         let transaction_xdr = BASE64.encode(&xdr_bytes);
 
         self.simulate_transaction(&transaction_xdr).await
@@ -709,6 +710,7 @@ impl SimulationEngine {
         total_bytes
     }
 
+    /// Estimate the size of an ScVal in bytes
     #[allow(clippy::only_used_in_recursion)]
     fn estimate_scval_size(&self, scval: &soroban_sdk::xdr::ScVal) -> u64 {
         use soroban_sdk::xdr::ScVal;
@@ -869,6 +871,7 @@ impl SimulationEngine {
             }
         }
 
+        // 5. Default fallback: Treat as Symbol (standard Soroban behavior for unquoted strings)
         // 5. Default fallback: Treat as Symbol (standard Soroban behavior for unquoted strings)
         let symbol: ScSymbol = arg
             .try_into()
