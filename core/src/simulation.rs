@@ -942,6 +942,87 @@ impl SimulationEngine {
     }
 }
 
+// ── Local WASM profiling ──────────────────────────────────────────────────────
+
+/// Profile a contract from raw WASM bytes using a local Soroban test environment.
+///
+/// **This function is synchronous and CPU-intensive.** Always call it from a
+/// `tokio::task::spawn_blocking` closure so it does not stall the async runtime.
+///
+/// Returns [`SorobanResources`] containing the CPU instructions and RAM bytes
+/// consumed by the invocation, plus the WASM file size as `transaction_size_bytes`.
+/// Ledger read/write bytes are `0` because the local env has no persistent ledger.
+pub fn profile_contract(
+    wasm_bytes: Vec<u8>,
+    function_name: String,
+    args: Vec<String>,
+) -> Result<SorobanResources, SimulationError> {
+    use soroban_sdk::{Env, Symbol, Val};
+
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(&*wasm_bytes, ());
+
+    // Build the argument list for the invocation.
+    let mut sdk_args: soroban_sdk::Vec<Val> = soroban_sdk::Vec::new(&env);
+    for arg_str in &args {
+        sdk_args.push_back(local_parse_arg(&env, arg_str));
+    }
+
+    let fn_symbol = Symbol::new(&env, &function_name);
+
+    // Capture baseline metrics *after* registration so we only measure the call.
+    env.cost_estimate().budget().reset_unlimited();
+    let start_cpu = env.cost_estimate().budget().cpu_instruction_cost();
+    let start_mem = env.cost_estimate().budget().memory_bytes_cost();
+
+    // Invoke; catch panics so a bad contract doesn't crash the server.
+    let invoke_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        env.invoke_contract::<Val>(&contract_id, &fn_symbol, sdk_args)
+    }));
+
+    let end_cpu = env.cost_estimate().budget().cpu_instruction_cost();
+    let end_mem = env.cost_estimate().budget().memory_bytes_cost();
+
+    if invoke_result.is_err() {
+        return Err(SimulationError::InvalidContract(
+            "Contract invocation panicked; verify function name and argument types".to_string(),
+        ));
+    }
+
+    Ok(SorobanResources {
+        cpu_instructions: end_cpu.saturating_sub(start_cpu),
+        ram_bytes: end_mem.saturating_sub(start_mem),
+        ledger_read_bytes: 0,
+        ledger_write_bytes: 0,
+        transaction_size_bytes: wasm_bytes.len() as u64,
+    })
+}
+
+/// Convert a string argument to a `soroban_sdk::Val` for local invocation.
+///
+/// Supports: `void`/`()`, `true`/`false`, integers, and falls back to Symbol.
+fn local_parse_arg(env: &soroban_sdk::Env, arg: &str) -> soroban_sdk::Val {
+    use soroban_sdk::IntoVal;
+    let arg = arg.trim();
+    if arg == "void" || arg == "()" {
+        return ().into_val(env);
+    }
+    if arg == "true" {
+        return true.into_val(env);
+    }
+    if arg == "false" {
+        return false.into_val(env);
+    }
+    if let Ok(n) = arg.parse::<i64>() {
+        return n.into_val(env);
+    }
+    if let Ok(n) = arg.parse::<u64>() {
+        return n.into_val(env);
+    }
+    soroban_sdk::Symbol::new(env, arg).into_val(env)
+}
+
 // ── Cache ─────────────────────────────────────────────────────────────────────
 
 const CACHE_TTL_SECS: u64 = 3_600;

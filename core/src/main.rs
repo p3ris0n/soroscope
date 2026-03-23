@@ -206,6 +206,20 @@ pub struct OptimizeLimitsResponse {
     pub recommended: crate::simulation::SorobanResources,
 }
 
+/// Request body for the WASM-bytes analysis endpoint.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct AnalyzeWasmRequest {
+    /// Base64-encoded WASM binary.
+    #[schema(example = "<base64-encoded .wasm bytes>")]
+    pub wasm_bytes: String,
+    /// Name of the exported function to invoke.
+    #[schema(example = "hello")]
+    pub function_name: String,
+    /// Optional function arguments (void | true | false | integers | symbols).
+    #[schema(example = "[]")]
+    pub args: Option<Vec<String>>,
+}
+
 /// Convert a `SimulationResult` (library type) into the API `ResourceReport`.
 fn to_report(result: &SimulationResult, insights_engine: &InsightsEngine) -> ResourceReport {
     let insights_report = insights_engine.analyze(&result.resources);
@@ -295,6 +309,58 @@ async fn analyze(
     );
 
     Ok((headers, Json(to_report(&result, &state.insights_engine))))
+}
+
+#[utoipa::path(
+    post,
+    path = "/analyze/wasm",
+    request_body = AnalyzeWasmRequest,
+    responses(
+        (status = 200, description = "Resource analysis successful", body = ResourceReport),
+        (status = 400, description = "Invalid base64 or WASM data"),
+        (status = 401, description = "Unauthorized"),
+        (status = 500, description = "Analysis failed")
+    ),
+    security(
+        ("jwt" = [])
+    ),
+    tag = "Analysis"
+)]
+async fn analyze_wasm(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<AnalyzeWasmRequest>,
+) -> Result<Json<ResourceReport>, AppError> {
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+
+    tracing::info!(
+        function_name = %payload.function_name,
+        "Received WASM analyze request"
+    );
+
+    let wasm_bytes = BASE64
+        .decode(&payload.wasm_bytes)
+        .map_err(|e| AppError::BadRequest(format!("Invalid base64 WASM data: {}", e)))?;
+
+    let function_name = payload.function_name.clone();
+    let args = payload.args.clone().unwrap_or_default();
+
+    let resources = tokio::task::spawn_blocking(move || {
+        simulation::profile_contract(wasm_bytes, function_name, args)
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("Contract profiling task panicked: {}", e)))?
+    .map_err(|e| AppError::Internal(format!("Contract profiling failed: {}", e)))?;
+
+    let sim_result = simulation::SimulationResult {
+        resources,
+        transaction_hash: None,
+        latest_ledger: 0,
+        cost_stroops: 0,
+        state_dependency: None,
+        transaction_data: String::new(),
+    };
+
+    Ok(Json(to_report(&sim_result, &state.insights_engine)))
 }
 
 #[utoipa::path(
@@ -494,9 +560,9 @@ fn write_temp_wasm(bytes: &[u8]) -> Result<std::path::PathBuf, AppError> {
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(analyze, optimize_limits, compare_handler, auth::challenge_handler, auth::verify_handler),
+    paths(analyze, analyze_wasm, optimize_limits, compare_handler, auth::challenge_handler, auth::verify_handler),
     components(schemas(
-        AnalyzeRequest, ResourceReport,
+        AnalyzeRequest, AnalyzeWasmRequest, ResourceReport,
         OptimizeLimitsRequest, OptimizeLimitsResponse,
         CompareApiResponse, RegressionReport, ResourceDelta, RegressionFlag,
         auth::ChallengeRequest, auth::ChallengeResponse,
@@ -656,6 +722,7 @@ async fn main() {
 
     let protected = Router::new()
         .route("/analyze", post(analyze))
+        .route("/analyze/wasm", post(analyze_wasm))
         .route("/analyze/optimize-limits", post(optimize_limits))
         .route("/analyze/compare", post(compare_handler))
         .route_layer(middleware::from_fn(auth::auth_middleware));
