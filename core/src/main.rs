@@ -11,7 +11,9 @@ mod simulation;
 use crate::comparison::{CompareMode, RegressionFlag, RegressionReport, ResourceDelta};
 use crate::errors::AppError;
 use crate::insights::InsightsEngine;
-use crate::jobs::{JobId, JobQueue, JobQueueConfig, JobWorker, SubmitJobRequest, SubmitJobResponse};
+use crate::jobs::{
+    JobId, JobQueue, JobQueueConfig, JobWorker, SubmitJobRequest, SubmitJobResponse,
+};
 use crate::rpc_provider::{ProviderRegistry, RpcProvider};
 use crate::simulation::{SimulationCache, SimulationEngine, SimulationResult};
 use axum::{
@@ -336,7 +338,7 @@ async fn analyze(
             (cached, "HIT")
         } else {
             tracing::debug!("Cache MISS for key: {}", cache_key);
-            
+
             // Wrap the simulation call with a timeout to prevent hanging
             let sim_result = tokio::time::timeout(
                 state.simulation_timeout,
@@ -798,7 +800,10 @@ async fn main() {
     );
 
     let simulation_timeout = std::time::Duration::from_secs(config.simulation_timeout_secs);
-    tracing::info!(timeout_secs = config.simulation_timeout_secs, "Simulation timeout configured");
+    tracing::info!(
+        timeout_secs = config.simulation_timeout_secs,
+        "Simulation timeout configured"
+    );
 
     let app_state = Arc::new(AppState {
         engine: SimulationEngine::with_registry_and_timeout(
@@ -868,7 +873,7 @@ mod tests {
     fn test_error_mapping_node_error() {
         let sim_err = SimulationError::NodeError("Invalid contract ID".to_string());
         let app_err: AppError = sim_err.into();
-        
+
         match app_err {
             AppError::BadRequest(msg) => {
                 assert!(msg.contains("Invalid contract ID"));
@@ -881,7 +886,7 @@ mod tests {
     fn test_error_mapping_invalid_contract() {
         let sim_err = SimulationError::InvalidContract("Contract not found".to_string());
         let app_err: AppError = sim_err.into();
-        
+
         match app_err {
             AppError::BadRequest(msg) => {
                 assert!(msg.contains("Contract not found"));
@@ -894,7 +899,7 @@ mod tests {
     fn test_error_mapping_timeout() {
         let sim_err = SimulationError::NodeTimeout;
         let app_err: AppError = sim_err.into();
-        
+
         match app_err {
             AppError::Internal(msg) => {
                 assert!(msg.contains("timed out"));
@@ -907,7 +912,7 @@ mod tests {
     fn test_error_mapping_rpc_request_failed() {
         let sim_err = SimulationError::RpcRequestFailed("Connection refused".to_string());
         let app_err: AppError = sim_err.into();
-        
+
         match app_err {
             AppError::Internal(msg) => {
                 assert!(msg.contains("Connection refused"));
@@ -921,7 +926,7 @@ mod tests {
         // Create a mock reqwest error (we can't easily create one, so test via RpcRequestFailed)
         let sim_err = SimulationError::RpcRequestFailed("Network unreachable".to_string());
         let app_err: AppError = sim_err.into();
-        
+
         match app_err {
             AppError::Internal(msg) => {
                 assert!(msg.contains("Network unreachable"));
@@ -967,11 +972,11 @@ mod tests {
     #[test]
     fn test_simulation_engine_timeout_configurable() {
         use std::time::Duration;
-        
+
         // Create a mock registry (we can't easily create one without mocking)
         // Instead, test that the SimulationEngine has timeout methods
         let engine = SimulationEngine::new("https://test.com".to_string());
-        
+
         // Default should be 30 seconds
         assert_eq!(engine.timeout(), Duration::from_secs(30));
     }

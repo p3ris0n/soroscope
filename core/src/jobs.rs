@@ -192,7 +192,9 @@ impl Job {
     }
 
     pub fn get_result(&self) -> Option<JobResult> {
-        self.result.as_ref().and_then(|r| serde_json::from_value(r.clone()).ok())
+        self.result
+            .as_ref()
+            .and_then(|r| serde_json::from_value(r.clone()).ok())
     }
 
     pub fn get_payload(&self) -> Option<JobPayload> {
@@ -202,7 +204,10 @@ impl Job {
     pub fn get_webhook_config(&self) -> Option<WebhookConfig> {
         self.webhook_url.as_ref().map(|url| WebhookConfig {
             callback_url: url.clone(),
-            headers: self.webhook_headers.as_ref().and_then(|h| serde_json::from_value(h.clone()).ok()),
+            headers: self
+                .webhook_headers
+                .as_ref()
+                .and_then(|h| serde_json::from_value(h.clone()).ok()),
             secret: self.webhook_secret.clone(),
         })
     }
@@ -271,7 +276,7 @@ impl JobQueue {
 
     async fn run_migrations(pool: &DbPool) -> Result<(), JobError> {
         let migration_sql = include_str!("../migrations/001_create_jobs_table.sql");
-        
+
         // Split and execute each statement
         for statement in migration_sql.split(";") {
             let stmt = statement.trim();
@@ -279,7 +284,7 @@ impl JobQueue {
                 pool.execute(stmt).await?;
             }
         }
-        
+
         Ok(())
     }
 
@@ -298,7 +303,8 @@ impl JobQueue {
         let (webhook_url, webhook_headers, webhook_secret) = match webhook {
             Some(w) => (
                 Some(w.callback_url),
-                w.headers.map(|h| serde_json::to_value(h).unwrap_or_default()),
+                w.headers
+                    .map(|h| serde_json::to_value(h).unwrap_or_default()),
                 w.secret,
             ),
             None => (None, None, None),
@@ -362,7 +368,7 @@ impl JobQueue {
                     .bind(id.0.to_string())
                     .fetch_optional(pool)
                     .await?;
-                
+
                 row.map(|r| self.row_to_job(&r)).transpose()?
             }
         };
@@ -372,24 +378,23 @@ impl JobQueue {
 
     /// Get the next queued job for processing
     pub async fn get_next_queued(&self) -> Result<Option<Job>, JobError> {
-        let job = match &self.pool {
-            DbPool::Postgres(pool) => {
-                sqlx::query_as::<_, Job>(
-                    "SELECT * FROM jobs WHERE status = 'QUEUED' ORDER BY created_at ASC LIMIT 1"
+        let job =
+            match &self.pool {
+                DbPool::Postgres(pool) => sqlx::query_as::<_, Job>(
+                    "SELECT * FROM jobs WHERE status = 'QUEUED' ORDER BY created_at ASC LIMIT 1",
                 )
                 .fetch_optional(pool)
-                .await?
-            }
-            DbPool::Sqlite(pool) => {
-                let row = sqlx::query(
+                .await?,
+                DbPool::Sqlite(pool) => {
+                    let row = sqlx::query(
                     "SELECT * FROM jobs WHERE status = 'QUEUED' ORDER BY created_at ASC LIMIT 1"
                 )
                 .fetch_optional(pool)
                 .await?;
-                
-                row.map(|r| self.row_to_job(&r)).transpose()?
-            }
-        };
+
+                    row.map(|r| self.row_to_job(&r)).transpose()?
+                }
+            };
 
         Ok(job)
     }
@@ -427,7 +432,7 @@ impl JobQueue {
         match &self.pool {
             DbPool::Postgres(pool) => {
                 sqlx::query(
-                    "UPDATE jobs SET progress_percent = $1, progress_message = $2 WHERE id = $3"
+                    "UPDATE jobs SET progress_percent = $1, progress_message = $2 WHERE id = $3",
                 )
                 .bind(percent)
                 .bind(message)
@@ -437,7 +442,7 @@ impl JobQueue {
             }
             DbPool::Sqlite(pool) => {
                 sqlx::query(
-                    "UPDATE jobs SET progress_percent = ?1, progress_message = ?2 WHERE id = ?3"
+                    "UPDATE jobs SET progress_percent = ?1, progress_message = ?2 WHERE id = ?3",
                 )
                 .bind(percent)
                 .bind(message)
@@ -481,12 +486,7 @@ impl JobQueue {
     }
 
     /// Mark a job as failed
-    pub async fn fail(
-        &self,
-        id: &JobId,
-        error: &str,
-        error_type: &str,
-    ) -> Result<(), JobError> {
+    pub async fn fail(&self, id: &JobId, error: &str, error_type: &str) -> Result<(), JobError> {
         let result = JobResult::Failed {
             error: error.to_string(),
             error_type: error_type.to_string(),
@@ -590,10 +590,10 @@ impl JobQueue {
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(interval_secs));
-            
+
             loop {
                 interval.tick().await;
-                
+
                 if let Err(e) = queue.cleanup().await {
                     tracing::error!("Cleanup task error: {}", e);
                 }
@@ -604,11 +604,12 @@ impl JobQueue {
     fn row_to_job(&self, row: &sqlx::sqlite::SqliteRow) -> Result<Job, JobError> {
         // Manual mapping for SQLite since FromRow might have issues
         use sqlx::Row;
-        
+
         let id_str: String = row.try_get("id")?;
-        let id = JobId(Uuid::parse_str(&id_str).map_err(|_| {
-            JobError::ProcessingFailed("Invalid UUID".to_string())
-        })?);
+        let id = JobId(
+            Uuid::parse_str(&id_str)
+                .map_err(|_| JobError::ProcessingFailed("Invalid UUID".to_string()))?,
+        );
 
         Ok(Job {
             id,
@@ -711,15 +712,11 @@ impl JobWorker {
 
                     tokio::spawn(async move {
                         let _permit = permit; // Hold permit until task completes
-                        
-                        if let Err(e) = Self::process_job(
-                            &queue,
-                            job,
-                            engine,
-                            insights,
-                            config,
-                            http_client,
-                        ).await {
+
+                        if let Err(e) =
+                            Self::process_job(&queue, job, engine, insights, config, http_client)
+                                .await
+                        {
                             tracing::error!("Job processing error: {}", e);
                         }
                     });
@@ -754,13 +751,14 @@ impl JobWorker {
         let result = tokio::time::timeout(
             timeout,
             Self::execute_job(&job, &engine, &insights_engine, queue),
-        ).await;
+        )
+        .await;
 
         // Handle result and send webhook
         match result {
             Ok(Ok(job_result)) => {
                 queue.complete(&job.id, &job_result).await?;
-                
+
                 if let Some(webhook_config) = job.get_webhook_config() {
                     Self::send_webhook(
                         &http_client,
@@ -770,13 +768,14 @@ impl JobWorker {
                         Some(&job_result),
                         config.webhook_timeout_secs,
                         config.webhook_max_retries,
-                    ).await;
+                    )
+                    .await;
                 }
             }
             Ok(Err(e)) => {
                 let error_msg = e.to_string();
                 queue.fail(&job.id, &error_msg, "ProcessingError").await?;
-                
+
                 if let Some(webhook_config) = job.get_webhook_config() {
                     Self::send_webhook(
                         &http_client,
@@ -786,13 +785,14 @@ impl JobWorker {
                         None,
                         config.webhook_timeout_secs,
                         config.webhook_max_retries,
-                    ).await;
+                    )
+                    .await;
                 }
             }
             Err(_) => {
                 let error_msg = format!("Job timed out after {} seconds", job.timeout_secs);
                 queue.fail(&job.id, &error_msg, "Timeout").await?;
-                
+
                 if let Some(webhook_config) = job.get_webhook_config() {
                     Self::send_webhook(
                         &http_client,
@@ -802,7 +802,8 @@ impl JobWorker {
                         None,
                         config.webhook_timeout_secs,
                         config.webhook_max_retries,
-                    ).await;
+                    )
+                    .await;
                 }
             }
         }
@@ -819,8 +820,15 @@ impl JobWorker {
         let payload = job.get_payload().ok_or("Invalid payload")?;
 
         match payload {
-            JobPayload::Analyze { contract_id, function_name, args, ledger_overrides } => {
-                queue.update_progress(&job.id, 30, "Running simulation").await?;
+            JobPayload::Analyze {
+                contract_id,
+                function_name,
+                args,
+                ledger_overrides,
+            } => {
+                queue
+                    .update_progress(&job.id, 30, "Running simulation")
+                    .await?;
 
                 let sim_result = engine
                     .simulate_from_contract_id(
@@ -831,10 +839,14 @@ impl JobWorker {
                     )
                     .await?;
 
-                queue.update_progress(&job.id, 70, "Generating insights").await?;
+                queue
+                    .update_progress(&job.id, 70, "Generating insights")
+                    .await?;
                 let _insights = insights_engine.analyze(&sim_result.resources);
 
-                queue.update_progress(&job.id, 90, "Finalizing results").await?;
+                queue
+                    .update_progress(&job.id, 90, "Finalizing results")
+                    .await?;
 
                 Ok(JobResult::Success {
                     resources: Some(sim_result.resources.clone()),
@@ -843,14 +855,23 @@ impl JobWorker {
                     comparison: None,
                 })
             }
-            JobPayload::OptimizeLimits { contract_id, function_name, args, safety_margin } => {
-                queue.update_progress(&job.id, 30, "Running optimization").await?;
+            JobPayload::OptimizeLimits {
+                contract_id,
+                function_name,
+                args,
+                safety_margin,
+            } => {
+                queue
+                    .update_progress(&job.id, 30, "Running optimization")
+                    .await?;
 
                 let report = engine
                     .optimize_limits(&contract_id, &function_name, args, safety_margin)
                     .await?;
 
-                queue.update_progress(&job.id, 90, "Finalizing results").await?;
+                queue
+                    .update_progress(&job.id, 90, "Finalizing results")
+                    .await?;
 
                 Ok(JobResult::Success {
                     resources: None,

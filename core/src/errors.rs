@@ -63,7 +63,7 @@ impl IntoResponse for AppError {
 }
 
 /// Convert SimulationError to AppError with appropriate HTTP status codes.
-/// 
+///
 /// Maps client errors (4xx) to BadRequest and server errors (5xx) to Internal.
 impl From<SimulationError> for AppError {
     fn from(err: SimulationError) -> Self {
@@ -85,20 +85,14 @@ impl From<SimulationError> for AppError {
             SimulationError::Base64Error(e) => {
                 AppError::BadRequest(format!("Base64 decode error: {}", e))
             }
-            
+
             // Server errors (HTTP 500)
-            SimulationError::NodeTimeout => {
-                AppError::Internal("RPC request timed out".to_string())
-            }
+            SimulationError::NodeTimeout => AppError::Internal("RPC request timed out".to_string()),
             SimulationError::RpcRequestFailed(msg) => {
                 AppError::Internal(format!("RPC request failed: {}", msg))
             }
-            SimulationError::NetworkError(e) => {
-                AppError::Internal(format!("Network error: {}", e))
-            }
-            SimulationError::Io(e) => {
-                AppError::Internal(format!("IO error: {}", e))
-            }
+            SimulationError::NetworkError(e) => AppError::Internal(format!("Network error: {}", e)),
+            SimulationError::Io(e) => AppError::Internal(format!("IO error: {}", e)),
             SimulationError::SerializationError(e) => {
                 AppError::Internal(format!("Serialization error: {}", e))
             }
