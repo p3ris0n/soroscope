@@ -4,3 +4,6 @@ pub mod insights;
 pub mod parser;
 pub mod rpc_provider;
 pub mod simulation;
+
+#[cfg(test)]
+pub mod fuzz_tests;
