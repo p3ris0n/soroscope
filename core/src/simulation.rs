@@ -106,6 +106,9 @@ pub struct SimulationResult {
     /// Cross-contract call graph
     #[serde(skip_serializing_if = "Option::is_none")]
     pub call_graph: Option<CallGraph>,
+    /// Snapshot of the ledger state used/touched during simulation
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub state_snapshot: Option<SimulationStateSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,6 +142,13 @@ impl CallGraph {
             self.append_mermaid_nodes(child, mermaid, id_gen);
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimulationStateSnapshot {
+    pub ledger_entries: HashMap<String, String>, // Key-B64 -> Entry-B64
+    pub ttl_entries: HashMap<String, u32>,       // Key-B64 -> LiveUntilLedger
+    pub latest_ledger: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -793,13 +803,14 @@ impl SimulationEngine {
                         )
                         .await
                     {
-                        Ok(ttl_report) => {
+                        Ok((ttl_report, snapshot)) => {
                             if !ttl_report.touched_entries.is_empty() {
                                 parsed.ttl_analysis = Some(ttl_report);
                             }
+                            parsed.state_snapshot = Some(snapshot);
                         }
                         Err(e) => {
-                            tracing::warn!("TTL analysis skipped due to RPC error: {}", e);
+                            tracing::warn!("State analysis skipped due to RPC error: {}", e);
                         }
                     }
                 }
@@ -847,7 +858,7 @@ impl SimulationEngine {
             };
 
             if topic0 == "fn_call" && topics.len() >= 3 {
-                // Topic 1: Contract Address
+                // Topic 1: Contract Address (ignored since we use event.contract_id)
                 // Topic 2: Function Name
                 let function = match &topics[2] {
                     ScVal::Symbol(s) => s.to_string(),
@@ -916,7 +927,7 @@ impl SimulationEngine {
         auth_value: Option<&str>,
         touched_keys: &[String],
         latest_ledger: u64,
-    ) -> Result<TtlAnalysisReport, SimulationError> {
+    ) -> Result<(TtlAnalysisReport, SimulationStateSnapshot), SimulationError> {
         let req = GetLedgerEntriesRequest {
             jsonrpc: "2.0".to_string(),
             id: 1,
@@ -957,10 +968,19 @@ impl SimulationEngine {
             }
         };
 
+        let mut ledger_entries = HashMap::new();
+        let mut ttl_entries = HashMap::new();
+
         let touched_entries: Vec<TtlEntryReport> = entries
             .into_iter()
             .filter_map(|entry| {
+                if let Some(xdr) = &entry.xdr {
+                    ledger_entries.insert(entry.key.clone(), xdr.clone());
+                }
+                
                 let live_until = entry.live_until_ledger_seq?;
+                ttl_entries.insert(entry.key.clone(), live_until);
+                
                 let remaining = live_until as i64 - latest_ledger as i64;
                 Some(TtlEntryReport {
                     key: entry.key,
@@ -973,11 +993,18 @@ impl SimulationEngine {
         let extend_ttl_suggestions =
             Self::build_extend_ttl_suggestions(&touched_entries, latest_ledger);
 
-        Ok(TtlAnalysisReport {
-            current_ledger: latest_ledger,
-            touched_entries,
-            extend_ttl_suggestions,
-        })
+        Ok((
+            TtlAnalysisReport {
+                current_ledger: latest_ledger,
+                touched_entries,
+                extend_ttl_suggestions,
+            },
+            SimulationStateSnapshot {
+                ledger_entries,
+                ttl_entries,
+                latest_ledger,
+            },
+        ))
     }
 
     fn build_extend_ttl_suggestions(

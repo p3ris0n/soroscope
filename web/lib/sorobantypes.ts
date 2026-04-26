@@ -29,6 +29,7 @@ export interface InvocationResult {
   };
   callGraph?: CallGraph;
   callGraphMermaid?: string;
+  stateSnapshot?: SimulationStateSnapshot;
   timestamp: number;
   success: boolean;
 }
@@ -41,6 +42,12 @@ export interface CallNode {
 
 export interface CallGraph {
   root: CallNode;
+}
+
+export interface SimulationStateSnapshot {
+  ledger_entries: Record<string, string>;
+  ttl_entries: Record<string, number>;
+  latest_ledger: number;
 }
 
 // Mock contract functions for demo
