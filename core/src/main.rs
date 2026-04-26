@@ -233,6 +233,10 @@ pub struct ResourceReport {
     pub ttl_analysis: Option<TtlAnalysisApiReport>,
     /// Efficiency score (0–100) and optimisation insights.
     pub nutrition: NutritionReport,
+    /// Cross-contract call graph
+    pub call_graph: Option<crate::simulation::CallGraph>,
+    /// Call graph in Mermaid format
+    pub call_graph_mermaid: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -435,6 +439,8 @@ fn to_report(result: &SimulationResult, insights_engine: &InsightsEngine) -> Res
                 })
                 .collect(),
         },
+        call_graph: result.call_graph.clone(),
+        call_graph_mermaid: result.call_graph.as_ref().map(|g| g.to_mermaid()),
     }
 }
 

@@ -27,8 +27,20 @@ export interface InvocationResult {
     ledger_write_bytes: number;
     transaction_size_bytes: number;
   };
+  callGraph?: CallGraph;
+  callGraphMermaid?: string;
   timestamp: number;
   success: boolean;
+}
+
+export interface CallNode {
+  contract_id: string;
+  function: string;
+  children: CallNode[];
+}
+
+export interface CallGraph {
+  root: CallNode;
 }
 
 // Mock contract functions for demo

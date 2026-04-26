@@ -2,6 +2,8 @@
 
 import type { InvocationResult } from '../lib/sorobantypes';
 
+import { CallGraphVisualizer } from './CallGraphVisualizer';
+
 interface ResultViewerProps {
   result: InvocationResult | null;
 }
@@ -81,16 +83,20 @@ export function ResultViewer({ result }: ResultViewerProps) {
               wordBreak: 'break-all',
               color: '#58a6ff',
               border: '1px solid #30363d',
+              maxHeight: '200px',
+              overflow: 'auto',
             }}
           >
-            <strong>Result:</strong>
+            <strong style={{ color: '#8b949e' }}>Result:</strong>
             <br />
             {JSON.stringify(result.result, null, 2)}
           </div>
         )
       )}
 
-
+      {result.callGraphMermaid && (
+        <CallGraphVisualizer mermaidDefinition={result.callGraphMermaid} />
+      )}
     </div>
   );
 }
